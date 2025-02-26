@@ -1,99 +1,74 @@
-from _datetime import datetime
-import time
-from app.validation import *
-from app.reading import *
-from flask import request, jsonify, redirect, url_for, render_template, session, make_response
-from app import app
+from Crypto.Random import get_random_bytes
+from Crypto.Cipher import AES
+from Crypto.Hash import SHA256
 
 
-@app.route('/api/users', methods=['POST'])
-def create_record():
-    data = request.form
-    email = data.get('email')
-    username = data.get('username')
-    nombre = data.get('nombre')
-    apellido = data.get('Apellidos')
-    password = data.get('password')
-    dni = data.get('dni')
-    dob = data.get('dob')
-    errores = []
-    print(data)
-    # Validaciones
-    if not validate_email(email):
-        errores.append("Email inválido")
-    if not validate_pswd(password):
-        errores.append("Contraseña inválida")
-    if not validate_dob(dob):
-        errores.append("Fecha de nacimiento inválida")
-    if not validate_dni(dni):
-        errores.append("DNI inválido")
-    if not validate_user(username):
-        errores.append("Usuario inválido")
-    if not validate_name(nombre):
-        errores.append("Nombre inválido")
-    if not validate_name(apellido):
-        errores.append("Apellido inválido")
+def hash_with_salt(texto):
+    # Generar un salt aleatorio
+    salt = get_random_bytes(16)
 
-    if errores:
-        return render_template('form.html', error=errores)
+    # Convertir el texto en claro a bytes
+    texto_bytes = texto.encode()
 
-    email = normalize_input(email)
+    # Crear un objeto de hash SHA-256
+    hash_object = SHA256.new()
 
-    db = read_db("db.txt")
-    db[email] = {
-        'nombre': normalize_input(nombre),
-        'apellido': normalize_input(apellido),
-        'username': normalize_input(username),
-        'password': normalize_input(password),
-        "dni": dni,
-        'dob': normalize_input(dob),
-    }
+    # Agregar la sal y el texto plano al hash
+    hash_object.update(salt + texto_bytes)
 
-    write_db("db.txt", db)
-    return redirect("/login")
+    # Calcular el hash final
+    hash_FI = hash_object.hexdigest()
+
+    return hash_FI
 
 
+def decrypt_aes(texto_cifrado_str, nonce_str, tag_str, clave):
+    # Convertir el texto cifrado, nonce y tag de cadena de texto a bytes
+    texto_cifrado = bytes.fromhex(texto_cifrado_str)
+    nonce = bytes.fromhex(nonce_str)
+    tag = bytes.fromhex(tag_str)
 
-# Endpoint para el login
-@app.route('/api/login', methods=['POST'])
-def api_login():
-    email = normalize_input(request.form['email'])
-    password = normalize_input(request.form['password'])
+    # Crear un objeto AES con la clave y el nonce proporcionados
+    cipher = AES.new(clave, AES.MODE_EAX, nonce=nonce)
 
-    db = read_db("db.txt")
-    if email not in db:
-        error = "Credenciales inválidas"
-        return render_template('login.html', error=error)
+    # Descifrar el texto con el tag
+    texto_descifrado = cipher.decrypt_and_verify(texto_cifrado, tag)
 
-    password_db = db.get(email)["password"]
-
-    if password_db == password :
-        return redirect(url_for('customer_menu'))
-    else:
-        return render_template('login.html', error=error)
+    # Convertir los bytes del texto descifrado a una cadena de texto
+    texto_descifrado_str = texto_descifrado.decode()
+    
+    return texto_descifrado_str
 
 
-# Página principal del menú del cliente
-@app.route('/customer_menu')
-def customer_menu():
+def encrypt_aes(texto, clave):
+    # Convertir el texto a bytes
+    texto_bytes = texto.encode()
 
-    db = read_db("db.txt")
+    # Crear un objeto AES con la clave proporcionada
+    cipher = AES.new(clave, AES.MODE_EAX)
 
-    transactions = read_db("transaction.txt")
-    current_balance = 100
-    last_transactions = []
-    message = request.args.get('message', '')
-    error = request.args.get('error', 'false').lower() == 'true'
-    return render_template('customer_menu.html',
-                           message=message,
-                           nombre="",
-                           balance=current_balance,
-                           last_transactions=last_transactions,
-                           error=error,)
+    # Cifrar el texto
+    nonce = cipher.nonce
+    texto_cifrado, tag = cipher.encrypt_and_digest(texto_bytes)
+
+    # Convertir el texto cifrado en bytes a una cadena de texto
+    texto_cifrado_str = texto_cifrado.hex()
+    tag_str = tag.hex()
+
+    # Devolver el texto cifrado, el nonce y el tag
+    return texto_cifrado_str, nonce.hex(), tag_str
 
 
-# Endpoint para leer un registro
-@app.route('/records', methods=['GET'])
-def read_record():
-    db = read_db("db.txt")
-    return render_template('records.html', users=db)
+if __name__ == '__main__':
+    texto = "Hola Mundo"
+    clave = get_random_bytes(16)
+    
+    # Cifrar el texto
+    texto_cifrado, nonce, tag = encrypt_aes(texto, clave)
+    print("Texto cifrado: " + texto_cifrado)
+    print("Nonce: " + nonce)
+    print("Tag: " + tag)
+    
+    # Descifrar el texto
+    des = decrypt_aes(texto_cifrado, nonce, tag, clave)
+    print("Texto descifrado: " + des)
