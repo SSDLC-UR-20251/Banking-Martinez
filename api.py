@@ -1,152 +1,30 @@
-from datetime import datetime, timedelta
+from _datetime import datetime
+import time
 from app.validation import *
 from app.reading import *
-from flask import request, jsonify, redirect, url_for, render_template, session, flash
+from flask import request, jsonify, redirect, url_for, render_template, session, make_response
 from app import app
 
 app.secret_key = 'your_secret_key'
 
-# Variables globales para intentos fallidos
-MAX_ATTEMPTS = 3
-LOCKOUT_TIME = timedelta(minutes=5)
-attempts = {}
 
-#  Función para verificar si un usuario está bloqueado
-def is_locked(email):
-    if email in attempts and attempts[email]["locked_until"]:
-        if datetime.now() < attempts[email]["locked_until"]:
-            return True, attempts[email]["locked_until"] - datetime.now()
-    return False, None
-
-#  Registra intentos fallidos y bloquea al usuario si excede el límite
-def register_attempt(email):
-    if email not in attempts:
-        attempts[email] = {"count": 0, "locked_until": None}
-    attempts[email]["count"] += 1
-    if attempts[email]["count"] >= MAX_ATTEMPTS:
-        attempts[email]["locked_until"] = datetime.now() + LOCKOUT_TIME
-
-#  Resetea intentos fallidos si el login es exitoso
-def reset_attempts(email):
-    if email in attempts:
-        attempts[email] = {"count": 0, "locked_until": None}
-
-
-#  Registro de usuario con validaciones
 @app.route('/api/users', methods=['POST'])
 def create_record():
     data = request.form
-    email = normalize_input(data.get('email'))
-    username = normalize_input(data.get('username'))
-    nombre = normalize_input(data.get('nombre'))
-    apellido = normalize_input(data.get('apellido'))
+    email = data.get('email')
+    username = data.get('username')
+    nombre = data.get('nombre')
+    apellido = data.get('Apellidos')
     password = data.get('password')
     dni = data.get('dni')
     dob = data.get('dob')
-
     errores = []
-
-    #  Validaciones
+    print(data)
+    # Validaciones
     if not validate_email(email):
-        errores.append("Email inválido. Debe ser @urosario.edu.co")
+        errores.append("Email inválido")
     if not validate_pswd(password):
-        errores.append("Contraseña no cumple con los requisitos.")
-    if not validate_dob(dob):
-        errores.append("Fecha de nacimiento inválida.")
-    if not validate_dni(dni):
-        errores.append("DNI inválido.")
-    if not validate_user(username):
-        errores.append("Usuario inválido.")
-    if not validate_name(nombre):
-        errores.append("Nombre inválido.")
-    if not validate_name(apellido):
-        errores.append("Apellido inválido.")
-
-    if errores:
-        return render_template('form.html', error=errores)
-
-    #  Guardar en la base de datos
-    db = read_db("db.txt")
-    db[email] = {
-        'nombre': nombre,
-        'apellido': apellido,
-        'username': username,
-        'password': password,
-        "dni": dni,
-        'dob': dob,
-        "role": "user"  # Todos los nuevos usuarios son "user" por defecto
-    }
-    write_db("db.txt", db)
-
-    flash("Usuario registrado exitosamente.", "success")
-    return redirect("/login")
-
-
-#  **Login con intentos fallidos y bloqueo**
-@app.route('/api/login', methods=['POST'])
-def api_login():
-    email = normalize_input(request.form['email'])
-    password = request.form['password']
-
-    #  Verificar si la cuenta está bloqueada
-    locked, remaining_time = is_locked(email)
-    if locked:
-        flash(f"Cuenta bloqueada. Inténtelo en {remaining_time.seconds // 60} minutos.", 'danger')
-        return redirect(url_for('login'))
-
-    db = read_db("db.txt")
-
-    if email not in db:
-        flash("Credenciales inválidas.", "danger")
-        register_attempt(email)
-        return render_template('login.html')
-
-    user = db[email]
-    if user["password"] == password:
-        session['user'] = email
-        session['role'] = user['role']
-        reset_attempts(email)  #  Resetea intentos fallidos
-        return redirect(url_for('customer_menu'))
-    else:
-        register_attempt(email)  #  Registrar intento fallido
-        flash("Correo o contraseña incorrectos.", "danger")
-        return render_template('login.html')
-
-
-#  Acceso a registros (solo admin)
-@app.route('/records', methods=['GET'])
-def read_record():
-    if 'user' not in session or session.get('role') != 'admin':
-        flash("Acceso denegado.", "danger")
-        return redirect(url_for('customer_menu'))
-
-    db = read_db("db.txt")
-    return render_template('records.html', users=db, role=session.get('role'))
-
-
-#  **Edición de usuario con validaciones**
-@app.route('/update_user/<email>', methods=['POST'])
-def update_user(email):
-    db = read_db("db.txt")
-
-    if email not in db:
-        flash("Usuario no encontrado.", "danger")
-        return redirect(url_for('read_record'))
-
-    #  Solo el usuario o un admin pueden modificar
-    if 'user' not in session or (session['user'] != email and session['role'] != 'admin'):
-        flash("No tienes permisos para modificar este usuario.", "danger")
-        return redirect(url_for("customer_menu"))
-
-    username = request.form['username']
-    dni = request.form['dni']
-    dob = request.form['dob']
-    nombre = request.form['nombre']
-    apellido = request.form['apellido']
-
-    errores = []
-
-    #  Validaciones
+        errores.append("Contraseña inválida")
     if not validate_dob(dob):
         errores.append("Fecha de nacimiento inválida")
     if not validate_dni(dni):
@@ -159,31 +37,112 @@ def update_user(email):
         errores.append("Apellido inválido")
 
     if errores:
-        return render_template('edit_user.html', user_data=db[email], email=email, error=errores)
+        return render_template('form.html', error=errores)
 
-    #  Guardar cambios
-    db[email]['username'] = username
-    db[email]['nombre'] = nombre
-    db[email]['apellido'] = apellido
-    db[email]['dni'] = dni
-    db[email]['dob'] = dob
-    write_db("db.txt", db)
-
-    flash("Información actualizada correctamente.", "success")
-    return redirect(url_for('read_record'))
-
-
-#  **Eliminar usuarios (solo admin)**
-@app.route('/delete_user/<email>', methods=['POST'])
-def delete_user(email):
-    if 'user' not in session or session['role'] != 'admin':
-        flash("No tienes permisos para eliminar usuarios.", 'danger')
-        return redirect(url_for('customer_menu'))
+    email = normalize_input(email)
 
     db = read_db("db.txt")
-    if email in db:
-        del db[email]
-        write_db("db.txt", db)
-        flash(f"Usuario {email} eliminado.", 'success')
+    db[email] = {
+        'nombre': normalize_input(nombre),
+        'apellido': normalize_input(apellido),
+        'username': normalize_input(username),
+        'password': normalize_input(password),
+        "dni": dni,
+        'dob': normalize_input(dob),
+        "role":"admin"
+    }
 
-    return redirect(url_for('read_record'))
+    write_db("db.txt", db)
+    return redirect("/login")
+
+
+# Endpoint para el login
+@app.route('/api/login', methods=['POST'])
+def api_login():
+    email = normalize_input(request.form['email'])
+    password = normalize_input(request.form['password'])
+
+    db = read_db("db.txt")
+    if email not in db:
+        error = "Credenciales inválidas"
+        return render_template('login.html', error=error)
+
+    password_db = db.get(email)["password"]
+
+    if password_db == password :
+        session['role'] = db[email]['role']
+        return redirect(url_for('customer_menu'))
+    else:
+        return render_template('login.html', error=error)
+
+
+# Página principal del menú del cliente
+@app.route('/customer_menu')
+def customer_menu():
+
+    db = read_db("db.txt")
+
+    transactions = read_db("transaction.txt")
+    current_balance = 100
+    last_transactions = []
+    message = request.args.get('message', '')
+    error = request.args.get('error', 'false').lower() == 'true'
+    return render_template('customer_menu.html',
+                           message=message,
+                           nombre="",
+                           balance=current_balance,
+                           last_transactions=last_transactions,
+                           error=error,)
+
+
+# Endpoint para leer un registro
+@app.route('/records', methods=['GET'])
+def read_record():
+    db = read_db("db.txt")
+    message = request.args.get('message', '')
+    return render_template('records.html', users=db,role=session.get('role'),message=message)
+
+
+@app.route('/update_user/<email>', methods=['POST'])
+def update_user(email):
+    # Leer la base de datos de usuarios
+    db = read_db("db.txt")
+
+    username = request.form['username']
+    dni = request.form['dni']
+    dob = request.form['dob']
+    nombre = request.form['nombre']
+    apellido = request.form['apellido']
+    errores = []
+
+    if not validate_dob(dob):
+        errores.append("Fecha de nacimiento inválida")
+    if not validate_dni(dni):
+        errores.append("DNI inválido")
+    if not validate_user(username):
+        errores.append("Usuario inválido")
+    if not validate_name(nombre):
+        errores.append("Nombre inválido")
+    if not validate_name(apellido):
+        errores.append("Apellido inválido")
+
+    if errores:
+        return render_template('edit_user.html',
+                               user_data=db[email],
+                               email=email,
+                               error=errores)
+
+
+    db[email]['username'] = normalize_input(username)
+    db[email]['nombre'] = normalize_input(nombre)
+    db[email]['apellido'] = normalize_input(apellido)
+    db[email]['dni'] = dni
+    db[email]['dob'] = normalize_input(dob)
+
+
+    write_db("db.txt", db)
+    
+
+    # Redirigir al usuario a la página de records con un mensaje de éxito
+    return redirect(url_for('read_record', message="Información actualizada correctamente"))
+
