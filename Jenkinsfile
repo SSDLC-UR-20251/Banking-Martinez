@@ -9,7 +9,7 @@ pipeline {
         }
         stage('Ejecutar los tests') {
             steps {
-               sh 'python3 app/validation.py'
+               sh 'python3 validation.py'
             }
         }
 
